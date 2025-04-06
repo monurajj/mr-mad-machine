@@ -1,0 +1,139 @@
+#include <WiFi.h>
+#include <SinricPro.h>
+#include <SinricProSwitch.h>
+
+// WiFi credentials
+const char* ssid = "iQOO Neo7";
+const char* password = "";
+
+// SinricPro credentials
+#define APP_KEY     "b9a22e51-b451-4951-9e5d-a961ec96bb7f"
+#define APP_SECRET  "2c944235-690b-4835-af85-b14bd887a164-5abeb779-95dc-49cc-a8f2-de14be08e1ea"
+
+// Device IDs for 3 switches
+const String switchIDs[3] = {
+  "67f13bb18ed485694c09f047",
+  "67f17079dc4a25d5c3a196db",
+  "67f170b5dc4a25d5c3a19721"
+};
+
+// GPIO pins for switches
+const uint8_t switchPins[3] = {15, 2, 22};
+
+// LED pins
+#define GREEN_LED   25
+#define RED_LED     26
+#define BLUE_LED    27
+
+// Track switch states
+bool switchStates[3] = {false, false, false};
+bool anySwitchOn = false;
+unsigned long lastBlinkTime = 0;
+bool blueLedState = false;
+
+// Callback for SinricPro switch state change
+bool onPowerState(const String &deviceId, bool &state) {
+  for (int i = 0; i < 3; i++) {
+    if (deviceId == switchIDs[i]) {
+      digitalWrite(switchPins[i], state ? LOW : HIGH);  // Active-low relay
+      switchStates[i] = state;
+      Serial.printf("Switch %d turned %s\n", i + 1, state ? "ON" : "OFF");
+      break;
+    }
+  }
+
+  // Check if any switch is ON
+  anySwitchOn = false;
+  for (int i = 0; i < 3; i++) {
+    if (switchStates[i]) {
+      anySwitchOn = true;
+      break;
+    }
+  }
+
+  return true;
+}
+
+void setupWiFi() {
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to WiFi");
+
+  int timeout = 20;
+  while (WiFi.status() != WL_CONNECTED && timeout-- > 0) {
+    Serial.print(".");
+    delay(500);
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nConnected to WiFi");
+  } else {
+    Serial.println("\nFailed to connect to WiFi");
+  }
+}
+
+void setupSinricPro() {
+  for (int i = 0; i < 3; i++) {
+    SinricProSwitch &mySwitch = SinricPro[switchIDs[i]];
+    mySwitch.onPowerState(onPowerState);
+  }
+
+  SinricPro.onConnected([]() {
+    Serial.println("Connected to SinricPro");
+  });
+  SinricPro.onDisconnected([]() {
+    Serial.println("Disconnected from SinricPro");
+  });
+
+  SinricPro.begin(APP_KEY, APP_SECRET);
+  SinricPro.restoreDeviceStates(true);
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  // Setup switch pins
+  for (int i = 0; i < 3; i++) {
+    pinMode(switchPins[i], OUTPUT);
+    digitalWrite(switchPins[i], HIGH); // default OFF (active-low)
+  }
+
+  // Setup LED pins
+  pinMode(GREEN_LED, OUTPUT);
+  pinMode(RED_LED, OUTPUT);
+  pinMode(BLUE_LED, OUTPUT);
+  digitalWrite(GREEN_LED, LOW);
+  digitalWrite(RED_LED, LOW);
+  digitalWrite(BLUE_LED, LOW);
+
+  setupWiFi();
+  setupSinricPro();
+}
+
+void updateWiFiLEDs() {
+  if (WiFi.status() == WL_CONNECTED) {
+    digitalWrite(GREEN_LED, HIGH);
+    digitalWrite(RED_LED, LOW);
+  } else {
+    digitalWrite(GREEN_LED, LOW);
+    digitalWrite(RED_LED, HIGH);
+  }
+}
+
+void updateBlueLEDBlink() {
+  if (anySwitchOn) {
+    unsigned long currentMillis = millis();
+    if (currentMillis - lastBlinkTime >= 500) {
+      lastBlinkTime = currentMillis;
+      blueLedState = !blueLedState;
+      digitalWrite(BLUE_LED, blueLedState ? HIGH : LOW);
+    }
+  } else {
+    digitalWrite(BLUE_LED, LOW); // OFF if no switches ON
+  }
+}
+
+void loop() {
+  SinricPro.handle();
+  updateWiFiLEDs();
+  updateBlueLEDBlink();
+}
